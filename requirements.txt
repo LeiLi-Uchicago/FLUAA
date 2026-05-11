@@ -1,0 +1,7 @@
+pandas
+xlrd
+openpyxl
+biopython
+pyarrow
+pytest
+

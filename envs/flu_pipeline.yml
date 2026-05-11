@@ -1,0 +1,14 @@
+name: fluaa
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python>=3.11
+  - pandas
+  - xlrd
+  - openpyxl
+  - biopython
+  - pyarrow
+  - nextclade>=3
+  - pytest
+
