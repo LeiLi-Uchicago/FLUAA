@@ -174,6 +174,52 @@ def test_generate_counts_joins_split_ha_and_skips_pax(tmp_path: Path, monkeypatc
     assert not (outdir / "PA-X").exists()
 
 
+def test_generate_counts_merges_same_protein_from_multiple_nextclade_groups(tmp_path: Path, monkeypatch) -> None:
+    metadata = tmp_path / "metadata.csv"
+    pd.DataFrame(
+        [
+            {"Isolate_Id": "EPI_OLD", "Year": "2008", "Month": "01", "HA_clade": "seasonal"},
+            {"Isolate_Id": "EPI_NEW", "Year": "2020", "Month": "01", "HA_clade": "pdm09"},
+        ]
+    ).to_csv(metadata, index=False)
+
+    seasonal = tmp_path / "seasonal_HA"
+    seasonal_translations = seasonal / "translations"
+    seasonal_translations.mkdir(parents=True)
+    (seasonal / "aligned.fasta").write_text(">old|EPI_OLD|HA\nATGAAA\n")
+    (seasonal / "nextclade.ndjson").write_text('{"seqName":"old|EPI_OLD|HA"}\n')
+    (seasonal_translations / "HA.fasta").write_text(">old|EPI_OLD|HA\nMK\n")
+
+    pdm09 = tmp_path / "pdm09_HA"
+    pdm09_translations = pdm09 / "translations"
+    pdm09_translations.mkdir(parents=True)
+    (pdm09 / "aligned.fasta").write_text(">new|EPI_NEW|HA\nATGCCC\n")
+    (pdm09 / "nextclade.ndjson").write_text('{"seqName":"new|EPI_NEW|HA"}\n')
+    (pdm09_translations / "HA.fasta").write_text(">new|EPI_NEW|HA\nMP\n")
+
+    outdir = tmp_path / "counts"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "generate_counts.py",
+            "--metadata",
+            str(metadata),
+            "--nextclade-dirs",
+            str(seasonal),
+            str(pdm09),
+            "--outdir",
+            str(outdir),
+            "--clade-columns",
+            "HA_clade",
+        ],
+    )
+    counts_main()
+
+    text = (outdir / "HA" / "aa_usage_by_Year_Month.csv").read_text()
+    assert "HA,2,2008,01,K,AAA,observed_exact,nextclade_aligned_nt,1" in text
+    assert "HA,2,2020,01,P,CCC,observed_exact,nextclade_aligned_nt,1" in text
+
+
 def annotation_for_ranges(ranges: dict[str, tuple[int, int]]) -> dict:
     genes = []
     for name, (begin, end) in ranges.items():

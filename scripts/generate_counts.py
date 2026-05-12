@@ -55,6 +55,7 @@ def main() -> None:
     write_insertion_outputs(outdir, events, insertion_support)
     write_supported_insertion_summary(outdir, insertion_support, args.insertion_min_support)
 
+    counts_by_protein: dict[str, Counter[tuple[str, ...]]] = {}
     for directory in map(Path, args.nextclade_dirs):
         aligned_nt_sequences = read_fasta_sequences(directory / "aligned.fasta")
         for protein, records in iter_translation_record_groups(directory / "translations"):
@@ -68,9 +69,13 @@ def main() -> None:
                 metadata_by_id,
                 clade_columns,
             )
-            write_count_tables_for_protein(protein, counts, outdir, clade_columns)
+            counts_by_protein.setdefault(protein, Counter()).update(counts)
             elapsed = time.monotonic() - start
-            print(f"[generate_counts] wrote {protein} in {elapsed:.1f}s", file=sys.stderr, flush=True)
+            print(f"[generate_counts] counted {protein} from {directory.name} in {elapsed:.1f}s", file=sys.stderr, flush=True)
+
+    for protein, counts in sorted(counts_by_protein.items()):
+        write_count_tables_for_protein(protein, counts, outdir, clade_columns)
+        print(f"[generate_counts] wrote merged {protein}", file=sys.stderr, flush=True)
 
     remove_empty_sqlite_from_previous_runs(outdir)
 

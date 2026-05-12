@@ -208,7 +208,7 @@ process GENERATE_COUNTS {
   def clades = (params.clade_columns ?: []).join(',')
   """
   export PYTHONPATH='${projectDir}':\${PYTHONPATH:-}
-  echo 'count_code_version: nextclade_aligned_nt_only_v7' >&2
+  echo 'count_code_version: nextclade_aligned_nt_only_merge_groups_v8' >&2
   ${params.python_cmd} ${projectDir}/scripts/generate_counts.py \\
     --metadata '${annotated_metadata}' \\
     --nextclade-dirs ${dirs} \\
