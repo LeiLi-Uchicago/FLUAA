@@ -281,25 +281,3 @@ The manifest builder assigns records as follows:
 | `Lineage` is empty and `Year < 2010` | `seasonal` |
 | `Lineage` is empty and `Year >= 2010` or missing | `pdm09` |
 
-## Testing
-
-Run the Python tests:
-
-```bash
-pytest -q
-```
-
-Run a Nextflow stub test:
-
-```bash
-nextflow run main.nf -profile H1N1 -stub-run \
-  --outdir /private/tmp/fluaa_stub \
-  --max_records_test 1
-```
-
-## Notes
-
-- Nextclade NDJSON is generated internally because insertion parsing still uses it, but it is not published to the final `nextclade/` output folder.
-- `PA-X` translations are ignored in count generation.
-- If Nextflow fails while creating a conda environment because of `conda-libmamba-solver`, this project configures conda with `--solver classic`.
-- Existing results from older pipeline versions may have older column layouts. Rerun the pipeline to regenerate outputs with the current schema.
