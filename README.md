@@ -11,7 +11,7 @@ Supported profiles:
 | `B_VIC` | Influenza B Victoria |
 | `B_YAM` | Influenza B Yamagata |
 
-## Input Layout
+## Input Layout (GISAID download format)
 
 Each subtype input directory should contain nucleotide FASTA files and metadata Excel files.
 
