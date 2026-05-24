@@ -263,7 +263,18 @@ def joined_ha_records(component_records: dict[str, dict[str, str]]) -> dict[str,
     ha1 = component_records["HA1"]
     ha2 = component_records["HA2"]
     names = sorted(set(sigpep) | set(ha1) | set(ha2))
-    return {name: sigpep.get(name, "") + ha1.get(name, "") + ha2.get(name, "") for name in names}
+    component_lengths = {
+        name: max((len(sequence) for sequence in records.values()), default=0)
+        for name, records in component_records.items()
+    }
+    return {
+        name: (
+            sigpep.get(name, "-" * component_lengths["SigPep"])
+            + ha1.get(name, "-" * component_lengths["HA1"])
+            + ha2.get(name, "-" * component_lengths["HA2"])
+        )
+        for name in names
+    }
 
 
 def build_codon_lookup(
