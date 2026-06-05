@@ -15,6 +15,7 @@ HA_COLUMNS_BY_SUBTYPE = {
     "H3N2": ["HA_clade", "HA_proposedSubclade", "HA_subclade", "HA_short_clade", "HA_legacy_clade"],
     "B_VIC": ["HA_clade", "HA_proposedSubclade", "HA_subclade", "HA_legacy_clade"],
     "B_YAM": ["HA_clade", "HA_legacy_clade_yam"],
+    "H5NX": ["HA_clade", "HA_polybasic_cleavage_site", "HA_cleavage_site", "HA_glycosylation"],
 }
 
 NEXTCLADE_COLUMN_ALIASES = {
@@ -24,6 +25,9 @@ NEXTCLADE_COLUMN_ALIASES = {
     "short_clade": ["short-clade", "short_clade", "shortClade", "short_clade_label"],
     "legacy_clade": ["legacy-clade", "legacy_clade", "legacyClade", "legacyCladeName"],
     "legacy_clade_yam": ["legacy-clade", "legacy_clade_yam", "legacyCladeYam", "legacy_clade", "legacyClade"],
+    "polybasic_cleavage_site": ["polybasic_cleavage_site", "polybasicCleavageSite"],
+    "cleavage_site": ["cleavage_site", "cleavageSite"],
+    "glycosylation": ["glycosylation"],
 }
 
 

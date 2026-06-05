@@ -10,6 +10,7 @@ Supported profiles:
 | `H3N2` | Influenza A/H3N2 |
 | `B_VIC` | Influenza B Victoria |
 | `B_YAM` | Influenza B Yamagata |
+| `H5NX` | Avian influenza A/H5Nx, with HA clading and NA subtype-aware counts |
 
 ## Input Layout (GISAID download format)
 
@@ -87,6 +88,14 @@ Run one subtype with the default local input/output paths:
 nextflow run main.nf -profile H1N1
 ```
 
+Run the bundled H5Nx example:
+
+```bash
+nextflow run main.nf -profile H5NX \
+  --input_dir h5_example \
+  --outdir results/H5NX
+```
+
 Run with conda environment creation:
 
 ```bash
@@ -136,6 +145,12 @@ nextflow run main.nf -profile B_YAM \
   --outdir results/B_YAM
 ```
 
+```bash
+nextflow run main.nf -profile H5NX \
+  --input_dir Data/H5NX \
+  --outdir results/H5NX
+```
+
 ## Main Parameters
 
 | Parameter | Default | Description |
@@ -149,6 +164,7 @@ nextflow run main.nf -profile B_YAM \
 | `--max_records_test` | `0` | Limit input records for smoke testing; `0` means no limit |
 | `--python_cmd` | `python` | Python executable |
 | `--nextclade_cmd` | `nextclade3` | Nextclade executable |
+| `--h5_ha_dataset` | `community/moncla-lab/iav-h5/ha/all-clades` | H5 HA Nextclade dataset used by the `H5NX` profile |
 
 ## Pipeline Steps
 
@@ -158,7 +174,7 @@ nextflow run main.nf -profile B_YAM \
 
 2. `BUILD_NEXTCLADE_MANIFEST`
 
-   Builds the list of gene FASTA files and Nextclade datasets to run. For H1N1, records are split into `pdm09` and `seasonal` groups using the metadata `Lineage` column and year.
+   Builds the list of gene FASTA files and Nextclade datasets to run. For H1N1, records are split into `pdm09` and `seasonal` groups using the metadata `Lineage` column and year. For H5NX, NA records are split by parsed `NA_subtype`; only configured N1/N2 groups are sent to Nextclade and the rest are handled by the H5 NA fallback counter.
 
 3. `RUN_NEXTCLADE`
 
@@ -174,7 +190,7 @@ nextflow run main.nf -profile B_YAM \
 
 6. `GENERATE_COUNTS`
 
-   Generates amino acid and codon count tables. Codons are inferred only from Nextclade aligned nucleotide FASTA plus Nextclade translated amino acid FASTA. Raw input NT sequences are not used as a codon fallback.
+   Generates amino acid and codon count tables. Codons are inferred from Nextclade aligned nucleotide FASTA plus Nextclade translated amino acid FASTA. For H5NX NA records that have no Nextclade translation, the pipeline infers an NA ORF from the raw nucleotide sequence and marks those codons with `CodonSource=fallback_orf`.
 
 7. `VALIDATE_CODONS`
 
@@ -255,6 +271,7 @@ The count tables are grouped by the clade columns configured per profile.
 | `H3N2` | `HA_clade`, `HA_short_clade`, `HA_legacy_clade`, `NA_clade` |
 | `B_VIC` | `HA_clade`, `HA_legacy_clade`, `NA_clade` |
 | `B_YAM` | `HA_clade` |
+| `H5NX` | `HA_clade`, `NA_subtype`, `Pathogenicity` |
 
 ## Nextclade References
 
@@ -267,6 +284,18 @@ The configured Nextclade references are summarized in `nextclade_references.md`.
 | H3N2 | all | `nextstrain/flu/h3n2/ha/EPI1857216` | `nextstrain/flu/h3n2/na/EPI1857215` | `nextstrain/flu/h3n2/mp` | `nextstrain/flu/h3n2/np` | `nextstrain/flu/h3n2/ns` | `nextstrain/flu/h3n2/pa` | `nextstrain/flu/h3n2/pb1` | `nextstrain/flu/h3n2/pb2` |
 | B_VIC | all | `nextstrain/flu/vic/ha/KX058884` | `nextstrain/flu/vic/na/CY073894` | `nextstrain/flu/vic/mp` | `nextstrain/flu/vic/np` | `nextstrain/flu/vic/ns` | `nextstrain/flu/vic/pa` | `nextstrain/flu/vic/pb1` | `nextstrain/flu/vic/pb2` |
 | B_YAM | all | `nextstrain/flu/yam/ha/JN993010` | `nextstrain/flu/b/na/CY073894` | `nextstrain/flu/b/mp` | `nextstrain/flu/b/np` | `nextstrain/flu/b/ns` | `nextstrain/flu/b/pa` | `nextstrain/flu/b/pb1` | `nextstrain/flu/b/pb2` |
+| H5NX | HA/all + internals | `community/moncla-lab/iav-h5/ha/all-clades` | N1: `nextstrain/flu/h1n1pdm/na/MW626056`; N2: `nextstrain/flu/h2n2/na`; N3-N9: fallback ORF | `nextstrain/flu/h2n2/mp` | `nextstrain/flu/h2n2/np` | `nextstrain/flu/h2n2/ns` | `nextstrain/flu/h2n2/pa` | `nextstrain/flu/h2n2/pb1` | `nextstrain/flu/h2n2/pb2` |
+
+## H5Nx Support
+
+The `H5NX` profile uses the official H5 HA Nextclade all-clades dataset by default. You can override it for focused HA clade runs:
+
+```bash
+nextflow run main.nf -profile H5NX \
+  --h5_ha_dataset community/moncla-lab/iav-h5/ha/2.3.4.4
+```
+
+The current H5 Nextclade datasets are HA-only, so FLUAA uses H2N2 influenza A datasets for internal-gene alignment/translation and subtype-aware NA outputs. NA count tables are named `NA_N1` through `NA_N9`. N1/N2 can use Nextclade translations when configured; other NA subtypes use fallback ORF translation with `CodonSource=fallback_orf`. NA records whose subtype cannot be parsed are skipped from NA protein counts.
 
 ## H1N1 Lineage Split
 
@@ -280,4 +309,3 @@ The manifest builder assigns records as follows:
 | `Lineage` is `seasonal` | `seasonal` |
 | `Lineage` is empty and `Year < 2010` | `seasonal` |
 | `Lineage` is empty and `Year >= 2010` or missing | `pdm09` |
-

@@ -12,7 +12,8 @@ from typing import Iterable
 import pandas as pd
 from Bio.Align import PairwiseAligner
 
-from flu_pipeline.fasta import parse_isolate_from_seq_name
+from flu_pipeline.fasta import iter_fasta, parse_isolate_from_seq_name
+from flu_pipeline.metadata import parse_na_subtype
 from flu_pipeline.nextclade import gene_from_nextclade_dir_name, iter_ndjson, object_seq_name
 
 
@@ -56,22 +57,43 @@ def main() -> None:
     write_supported_insertion_summary(outdir, insertion_support, args.insertion_min_support)
 
     counts_by_protein: dict[str, Counter[tuple[str, ...]]] = {}
+    translated_na_ids: set[str] = set()
     for directory in map(Path, args.nextclade_dirs):
+        gene = gene_from_nextclade_dir_name(directory.name)
         aligned_nt_sequences = read_fasta_sequences(directory / "aligned.fasta")
         for protein, records in iter_translation_record_groups(directory / "translations"):
-            start = time.monotonic()
-            print(f"[generate_counts] counting {protein} from {directory.name}", file=sys.stderr, flush=True)
-            codon_lookup = build_codon_lookup(records, aligned_nt_sequences)
-            counts = aggregate_translation(
-                protein,
-                records.items(),
-                codon_lookup,
-                metadata_by_id,
-                clade_columns,
+            if gene == "NA":
+                translated_na_ids.update(parse_isolate_from_seq_name(seq_name) for seq_name in records)
+            record_groups = (
+                h5_na_translation_record_groups(records, metadata_by_id)
+                if args.h5_na_fallback and gene == "NA"
+                else [(protein, records)]
             )
-            counts_by_protein.setdefault(protein, Counter()).update(counts)
-            elapsed = time.monotonic() - start
-            print(f"[generate_counts] counted {protein} from {directory.name} in {elapsed:.1f}s", file=sys.stderr, flush=True)
+            for output_protein, output_records in record_groups:
+                if not output_records:
+                    continue
+                start = time.monotonic()
+                print(f"[generate_counts] counting {output_protein} from {directory.name}", file=sys.stderr, flush=True)
+                codon_lookup = build_codon_lookup(output_records, aligned_nt_sequences)
+                counts = aggregate_translation(
+                    output_protein,
+                    output_records.items(),
+                    codon_lookup,
+                    metadata_by_id,
+                    clade_columns,
+                )
+                counts_by_protein.setdefault(output_protein, Counter()).update(counts)
+                elapsed = time.monotonic() - start
+                print(f"[generate_counts] counted {output_protein} from {directory.name} in {elapsed:.1f}s", file=sys.stderr, flush=True)
+
+    if args.h5_na_fallback:
+        add_h5_na_fallback_counts(
+            counts_by_protein,
+            args.gene_fastas,
+            metadata_by_id,
+            translated_na_ids,
+            clade_columns,
+        )
 
     for protein, counts in sorted(counts_by_protein.items()):
         write_count_tables_for_protein(protein, counts, outdir, clade_columns)
@@ -102,6 +124,21 @@ def aggregate_translation(
     return counts
 
 
+def h5_na_translation_record_groups(
+    records: dict[str, str],
+    metadata_by_id: dict[str, dict[str, str]],
+) -> list[tuple[str, dict[str, str]]]:
+    grouped: dict[str, dict[str, str]] = {}
+    for seq_name, aa_sequence in records.items():
+        isolate_id = parse_isolate_from_seq_name(seq_name)
+        meta = metadata_by_id.get(isolate_id, {})
+        na_subtype = str(meta.get("NA_subtype") or parse_na_subtype(meta.get("Subtype", "")) or "unknown")
+        if na_subtype == "unknown":
+            continue
+        grouped.setdefault(f"NA_{na_subtype}", {})[seq_name] = aa_sequence
+    return sorted(grouped.items())
+
+
 def add_observation(
     batch: Counter[tuple[str, ...]],
     protein: str,
@@ -120,6 +157,103 @@ def add_observation(
         rows.append((column, unknown_if_empty(meta.get(column, ""))))
     for group_column, group_value in rows:
         batch[(protein, position, amino_acid, codon, codon_status, codon_source, year, month, group_column, group_value)] += 1
+
+
+def add_h5_na_fallback_counts(
+    counts_by_protein: dict[str, Counter[tuple[str, ...]]],
+    gene_fastas: list[str],
+    metadata_by_id: dict[str, dict[str, str]],
+    translated_na_ids: set[str],
+    clade_columns: list[str],
+) -> None:
+    na_fasta = find_gene_fasta(gene_fastas, "NA")
+    if na_fasta is None:
+        return
+
+    fallback_records = 0
+    for record in iter_fasta(na_fasta):
+        if record.isolate_id in translated_na_ids:
+            continue
+        meta = metadata_by_id.get(record.isolate_id, {})
+        na_subtype = str(meta.get("NA_subtype") or parse_na_subtype(meta.get("Subtype", "")) or "unknown")
+        if na_subtype == "unknown":
+            continue
+        protein = f"NA_{na_subtype}"
+        codons = best_orf_codons(record.sequence)
+        if not codons:
+            continue
+        counts = counts_by_protein.setdefault(protein, Counter())
+        for index, codon in enumerate(codons, start=1):
+            aa = translate_codon(codon)
+            amino_acid, clean_codon, codon_status = normalize_amino_acid_and_codon(aa, codon)
+            add_observation(
+                counts,
+                protein,
+                str(index),
+                amino_acid,
+                clean_codon,
+                codon_status,
+                "fallback_orf",
+                meta,
+                clade_columns,
+            )
+        fallback_records += 1
+    print(f"[generate_counts] counted {fallback_records} H5 NA records with fallback_orf", file=sys.stderr, flush=True)
+
+
+def find_gene_fasta(gene_fastas: list[str], gene: str) -> Path | None:
+    gene = gene.upper()
+    for path_text in gene_fastas:
+        path = Path(path_text)
+        if path.stem.upper() == gene:
+            return path
+    return None
+
+
+def best_orf_codons(nt_sequence: str) -> list[str]:
+    clean_nt = clean_nt_sequence(nt_sequence)
+    candidates: list[tuple[int, int, list[str]]] = []
+    for strand_order, sequence in enumerate([clean_nt, reverse_complement(clean_nt)]):
+        for frame in range(3):
+            codons = [sequence[index : index + 3] for index in range(frame, len(sequence) - 2, 3)]
+            for candidate in orf_candidates(codons):
+                candidates.append((len(candidate), -(strand_order * 3 + frame), candidate))
+    if not candidates:
+        return []
+    return max(candidates, key=lambda item: (item[0], item[1], codon_quality(item[2])))[2]
+
+
+def orf_candidates(codons: list[str]) -> Iterable[list[str]]:
+    starts = [index for index, codon in enumerate(codons) if normalize_codon(codon) == "ATG"]
+    for start in starts:
+        end = next_stop_index(codons, start)
+        candidate = codons[start:end]
+        if candidate:
+            yield candidate
+    if starts:
+        return
+
+    segment: list[str] = []
+    for codon in codons:
+        if CODON_TABLE.get(normalize_codon(codon), "X") == "*":
+            if segment:
+                yield segment
+            segment = []
+        else:
+            segment.append(codon)
+    if segment:
+        yield segment
+
+
+def next_stop_index(codons: list[str], start: int) -> int:
+    for index in range(start, len(codons)):
+        if CODON_TABLE.get(normalize_codon(codons[index]), "X") == "*":
+            return index
+    return len(codons)
+
+
+def codon_quality(codons: list[str]) -> int:
+    return sum(1 for codon in codons if normalize_codon_with_status(codon)[1] == "valid_codon")
 
 
 def classify_aa(aa: str, codon: str) -> tuple[str, str, str]:
@@ -747,6 +881,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--outdir", required=True)
     parser.add_argument("--insertion-min-support", type=int, default=2)
     parser.add_argument("--clade-columns", default="")
+    parser.add_argument("--h5-na-fallback", action="store_true")
     return parser.parse_args()
 
 

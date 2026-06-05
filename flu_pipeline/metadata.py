@@ -7,6 +7,7 @@ import pandas as pd
 
 
 DATE_RE = re.compile(r"^(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2}))?)?$")
+NA_SUBTYPE_RE = re.compile(r"N([1-9])\b", re.IGNORECASE)
 
 
 def normalize_date(value: object) -> tuple[str, str]:
@@ -72,6 +73,7 @@ def read_metadata_files(input_dir: Path, id_column: str, date_column: str) -> pd
     years_months = data[date_column].map(normalize_date)
     data["Year"] = [item[0] for item in years_months]
     data["Month"] = [item[1] for item in years_months]
+    data["NA_subtype"] = data["Subtype"].map(parse_na_subtype)
 
     data["_update_sort"] = pd.to_datetime(data["Update_Date"], errors="coerce")
     data["_submission_sort"] = pd.to_datetime(data["Submission_Date"], errors="coerce")
@@ -83,6 +85,13 @@ def read_metadata_files(input_dir: Path, id_column: str, date_column: str) -> pd
     data = data.drop_duplicates(subset=[id_column], keep="first")
     data = data.rename(columns={"_source_file": "source_file"})
     return data.drop(columns=["_update_sort", "_submission_sort", "_source_order", "_row_order"])
+
+
+def parse_na_subtype(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "unknown"
+    match = NA_SUBTYPE_RE.search(str(value))
+    return f"N{match.group(1)}" if match else "unknown"
 
 
 def _clean_text(value: object) -> str:

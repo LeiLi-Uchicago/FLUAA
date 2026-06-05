@@ -14,6 +14,10 @@ nextflow run main.nf -profile B_YAM \
   --input_dir /Volumes/Lei_work/Projects/FLU/FLUComprehansiveData/B_YAM \
   --outdir results/B_YAM
 
+nextflow run main.nf -profile H5NX \
+  --input_dir h5_example \
+  --outdir results/H5NX
+
 
 
 nextflow run main.nf -profile H1N1 \
@@ -31,3 +35,7 @@ nextflow run main.nf -profile B_VIC \
 nextflow run main.nf -profile B_YAM \
   --input_dir /Volumes/Lei_work/Projects/FLU/FLUComprehansiveData/B_YAM \
   --outdir /Volumes/Lei_work/Projects/FLU/FLUComprehansiveData/results/B_YAM
+
+nextflow run main.nf -profile H5NX \
+  --input_dir /Volumes/Lei_work/Projects/FLU/FLUComprehansiveData/H5NX \
+  --outdir /Volumes/Lei_work/Projects/FLU/FLUComprehansiveData/results/H5NX

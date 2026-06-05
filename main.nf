@@ -7,7 +7,7 @@ nextflow.enable.dsl = 2
 def requiredParams = ['subtype', 'input_dir', 'datasets']
 requiredParams.each { key ->
   if (!params.containsKey(key) || params[key] == null) {
-    error "Missing params.${key}. Run with one of: -profile H1N1, H3N2, B_VIC, B_YAM"
+    error "Missing params.${key}. Run with one of: -profile H1N1, H3N2, B_VIC, B_YAM, H5NX"
   }
 }
 
@@ -134,6 +134,7 @@ process BUILD_NEXTCLADE_MANIFEST {
   def fastas = gene_fastas.collect { "'${it}'" }.join(' ')
   def datasetsJson = JsonOutput.toJson(params.datasets ?: [:])
   def seasonalJson = JsonOutput.toJson(params.h1n1_seasonal_datasets ?: [:])
+  def h5NaJson = JsonOutput.toJson(params.h5_na_nextclade_datasets ?: [:])
   def splitFlag = params.h1n1_split_lineage ? "--h1n1-split-lineage" : ""
   """
   export PYTHONPATH='${projectDir}':\${PYTHONPATH:-}
@@ -145,6 +146,7 @@ process BUILD_NEXTCLADE_MANIFEST {
     --id-column '${params.id_column}' \\
     --datasets-json '${datasetsJson}' \\
     --h1n1-seasonal-datasets-json '${seasonalJson}' \\
+    --h5-na-nextclade-datasets-json '${h5NaJson}' \\
     ${splitFlag}
   """
 
@@ -206,6 +208,7 @@ process GENERATE_COUNTS {
   def dirs = nextclade_dirs.collect { "'${it}'" }.join(' ')
   def fastas = gene_fastas.collect { "'${it}'" }.join(' ')
   def clades = (params.clade_columns ?: []).join(',')
+  def h5NaFallback = params.h5_na_fallback ? "--h5-na-fallback" : ""
   """
   export PYTHONPATH='${projectDir}':\${PYTHONPATH:-}
   echo 'count_code_version: nextclade_aligned_nt_only_merge_groups_v8' >&2
@@ -215,7 +218,8 @@ process GENERATE_COUNTS {
     --gene-fastas ${fastas} \\
     --outdir count \\
     --insertion-min-support ${params.insertion_min_support} \\
-    --clade-columns '${clades}'
+    --clade-columns '${clades}' \\
+    ${h5NaFallback}
   """
 
   stub:

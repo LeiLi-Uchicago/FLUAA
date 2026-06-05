@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from flu_pipeline.fasta import iter_fasta, write_fasta_record
+from flu_pipeline.metadata import parse_na_subtype
 
 
 GENES = ["HA", "NA", "MP", "NP", "NS", "PA", "PB1", "PB2"]
@@ -22,8 +23,10 @@ def main() -> None:
 
     datasets = json.loads(args.datasets_json)
     seasonal_datasets = json.loads(args.h1n1_seasonal_datasets_json or "{}")
+    h5_na_datasets = json.loads(args.h5_na_nextclade_datasets_json or "{}")
     metadata = pd.read_csv(args.metadata, dtype=str, keep_default_na=False)
     group_by_id = lineage_group_by_isolate(metadata, args.id_column, args.subtype)
+    h5_na_by_id = h5_na_subtype_by_isolate(metadata, args.id_column)
 
     manifest_rows: list[dict[str, str]] = []
     for fasta in sorted(Path(path) for path in args.gene_fastas):
@@ -32,6 +35,8 @@ def main() -> None:
             continue
         if args.subtype == "H1N1" and args.h1n1_split_lineage:
             rows = split_h1n1_gene(fasta, split_dir, gene, group_by_id, datasets, seasonal_datasets)
+        elif args.subtype == "H5NX" and gene == "NA":
+            rows = split_h5_na_gene(fasta, split_dir, h5_na_by_id, h5_na_datasets)
         else:
             rows = write_unsplit_gene(fasta, split_dir, gene, datasets)
         manifest_rows.extend(rows)
@@ -67,6 +72,18 @@ def classify_h1n1_lineage(row: dict[str, object]) -> str:
     if year is not None and year < 2010:
         return "seasonal"
     return "pdm09"
+
+
+def h5_na_subtype_by_isolate(metadata: pd.DataFrame, id_column: str) -> dict[str, str]:
+    if id_column not in metadata.columns:
+        id_column = "Isolate_Id" if "Isolate_Id" in metadata.columns else metadata.columns[0]
+    groups: dict[str, str] = {}
+    for row in metadata.to_dict(orient="records"):
+        isolate_id = str(row.get(id_column, "")).strip()
+        if not isolate_id:
+            continue
+        groups[isolate_id] = str(row.get("NA_subtype") or parse_na_subtype(row.get("Subtype", "")))
+    return groups
 
 
 def parse_year(value: object) -> int | None:
@@ -105,6 +122,31 @@ def split_h1n1_gene(
     return rows
 
 
+def split_h5_na_gene(
+    fasta: Path,
+    split_dir: Path,
+    subtype_by_id: dict[str, str],
+    h5_na_datasets: dict[str, str],
+) -> list[dict[str, str]]:
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for record in iter_fasta(fasta):
+        group = subtype_by_id.get(record.isolate_id, "unknown")
+        grouped.setdefault(group, []).append((record.header, record.sequence))
+
+    rows: list[dict[str, str]] = []
+    for group, records in sorted(grouped.items()):
+        dataset = h5_na_datasets.get(group)
+        if not dataset:
+            continue
+        path = split_dir / group / "NA.fasta"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w") as handle:
+            for header, sequence in records:
+                write_fasta_record(handle, header, sequence)
+        rows.append({"group": group, "gene": "NA", "fasta": str(path.resolve()), "dataset": str(dataset)})
+    return rows
+
+
 def write_unsplit_gene(
     fasta: Path,
     split_dir: Path,
@@ -129,6 +171,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--id-column", default="Isolate_Id")
     parser.add_argument("--datasets-json", required=True)
     parser.add_argument("--h1n1-seasonal-datasets-json", default="{}")
+    parser.add_argument("--h5-na-nextclade-datasets-json", default="{}")
     parser.add_argument("--h1n1-split-lineage", action="store_true")
     return parser.parse_args()
 
