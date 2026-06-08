@@ -8,6 +8,7 @@ import pandas as pd
 
 DATE_RE = re.compile(r"^(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2}))?)?$")
 NA_SUBTYPE_RE = re.compile(r"N([1-9])\b", re.IGNORECASE)
+STRAIN_YEAR_RE = re.compile(r"/(\d{4})$")
 
 
 def normalize_date(value: object) -> tuple[str, str]:
@@ -26,6 +27,23 @@ def normalize_date(value: object) -> tuple[str, str]:
     if pd.isna(parsed):
         return "", ""
     return f"{parsed.year:04d}", f"{parsed.month:02d}"
+
+
+def normalize_date_for_strain(value: object, strain: object) -> tuple[str, str]:
+    year, month = normalize_date(value)
+    expected_year = strain_year(strain)
+    if expected_year and year and expected_year != year:
+        return expected_year, ""
+    if expected_year and not year:
+        return expected_year, ""
+    return year, month
+
+
+def strain_year(strain: object) -> str:
+    if strain is None or pd.isna(strain):
+        return ""
+    match = STRAIN_YEAR_RE.search(str(strain).strip())
+    return match.group(1) if match else ""
 
 
 def read_metadata_files(input_dir: Path, id_column: str, date_column: str) -> pd.DataFrame:
@@ -70,7 +88,10 @@ def read_metadata_files(input_dir: Path, id_column: str, date_column: str) -> pd
     data[id_column] = data[id_column].map(_clean_text)
     data["Isolate_Name"] = data["Isolate_Name"].map(_clean_text)
     data["strain"] = data["Isolate_Name"]
-    years_months = data[date_column].map(normalize_date)
+    years_months = [
+        normalize_date_for_strain(date_value, strain_value)
+        for date_value, strain_value in zip(data[date_column], data["strain"])
+    ]
     data["Year"] = [item[0] for item in years_months]
     data["Month"] = [item[1] for item in years_months]
     data["NA_subtype"] = data["Subtype"].map(parse_na_subtype)
