@@ -20,10 +20,17 @@ class FastaRecord:
 
 def parse_header(header: str) -> tuple[str, str, str]:
     text = header[1:] if header.startswith(">") else header
-    parts = text.strip().split("|")
-    if len(parts) != 3 or not all(part.strip() for part in parts):
+    parts = [part.strip() for part in text.strip().split("|")]
+    if len(parts) == 3 and all(parts):
+        return parts[0], parts[1], parts[2].upper()
+
+    if len(parts) >= 3 and parts[0] and parts[-1]:
+        for isolate_id in reversed(parts[1:-1]):
+            if isolate_id:
+                return parts[0], isolate_id, parts[-1].upper()
+
         raise ValueError(f"Expected FASTA header 'Isolate_Name|Isolate_Id|gene', got: {header!r}")
-    return parts[0].strip(), parts[1].strip(), parts[2].strip().upper()
+    raise ValueError(f"Expected FASTA header 'Isolate_Name|Isolate_Id|gene', got: {header!r}")
 
 
 def iter_fasta(path: Path) -> Iterator[FastaRecord]:
@@ -78,4 +85,3 @@ def _record_from_parts(header: str, chunks: list[str]) -> FastaRecord:
         gene=gene,
         sequence="".join(chunks).upper(),
     )
-

@@ -29,7 +29,7 @@ def main() -> None:
     malformed_rows: list[dict[str, object]] = []
     processed = 0
 
-    for fasta_path in sorted(path for path in Path(args.input_dir).glob("*-NT.fasta") if not path.name.startswith(".")):
+    for fasta_path in input_fasta_paths(Path(args.input_dir)):
         try:
             for record in iter_fasta(fasta_path):
                 processed += 1
@@ -99,6 +99,14 @@ def choose_best(previous: dict[str, object], candidate: dict[str, object]) -> di
     previous_score = (int(previous["ungapped_len"]), -float(previous["ambiguous_fraction"]))
     candidate_score = (int(candidate["ungapped_len"]), -float(candidate["ambiguous_fraction"]))
     return candidate if candidate_score > previous_score else previous
+
+
+def input_fasta_paths(input_dir: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in input_dir.glob("*.fasta")
+        if not path.name.startswith(".")
+    )
 
 
 def write_dicts(path: Path, rows: list[dict[str, object]]) -> None:
