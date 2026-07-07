@@ -8,6 +8,15 @@ from typing import Iterator, TextIO
 AMBIGUOUS_NT = set("NRYKMSWBDHVU")
 GAP_CHARS = set("-.")
 
+# Canonical influenza gene/segment names, used to locate the gene field in a
+# pipe-delimited FASTA header regardless of how many extra fields surround it.
+GENE_NAMES = ("HA", "NA", "MP", "NP", "NS", "PA", "PB1", "PB2")
+
+
+def normalize_gene(token: str) -> str | None:
+    text = token.strip().upper()
+    return text if text in GENE_NAMES else None
+
 
 @dataclass(frozen=True)
 class FastaRecord:
@@ -21,16 +30,41 @@ class FastaRecord:
 def parse_header(header: str) -> tuple[str, str, str]:
     text = header[1:] if header.startswith(">") else header
     parts = [part.strip() for part in text.strip().split("|")]
-    if len(parts) == 3 and all(parts):
-        return parts[0], parts[1], parts[2].upper()
-
-    if len(parts) >= 3 and parts[0] and parts[-1]:
-        for isolate_id in reversed(parts[1:-1]):
-            if isolate_id:
-                return parts[0], isolate_id, parts[-1].upper()
-
+    if len(parts) < 3 or not parts[0]:
         raise ValueError(f"Expected FASTA header 'Isolate_Name|Isolate_Id|gene', got: {header!r}")
-    raise ValueError(f"Expected FASTA header 'Isolate_Name|Isolate_Id|gene', got: {header!r}")
+
+    strain = parts[0]
+
+    # Locate the gene by matching a known gene name rather than assuming a fixed
+    # position: GISAID exports may append a trailing segment id (e.g.
+    # 'Name|Isolate_Id|HA|EPI351721') or carry extra fields before the gene.
+    gene: str | None = None
+    gene_index: int | None = None
+    for index in range(len(parts) - 1, 0, -1):
+        candidate = normalize_gene(parts[index])
+        if candidate:
+            gene, gene_index = candidate, index
+            break
+
+    if gene is None or gene_index is None:
+        raise ValueError(f"Expected FASTA header 'Isolate_Name|Isolate_Id|gene', got: {header!r}")
+
+    # The isolate id sits before the gene; prefer an explicit GISAID id.
+    isolate_id = ""
+    for part in parts[1:gene_index]:
+        if part.upper().startswith("EPI_ISL"):
+            isolate_id = part
+            break
+    if not isolate_id:
+        for part in reversed(parts[1:gene_index]):
+            if part:
+                isolate_id = part
+                break
+
+    if not isolate_id:
+        raise ValueError(f"Expected FASTA header 'Isolate_Name|Isolate_Id|gene', got: {header!r}")
+
+    return strain, isolate_id, gene
 
 
 def iter_fasta(path: Path) -> Iterator[FastaRecord]:

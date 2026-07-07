@@ -37,5 +37,6 @@ nextflow run main.nf -profile B_YAM \
   --outdir /Volumes/Lei_work/Projects/FLU/FLUComprehansiveData/results/B_YAM
 
 nextflow run main.nf -profile H5NX \
+  -w /Volumes/Lei_work/Projects/FLU/FLUComprehansiveData/work \
   --input_dir /Volumes/Lei_work/Projects/FLU/FLUComprehansiveData/H5NX \
   --outdir /Volumes/Lei_work/Projects/FLU/FLUComprehansiveData/results/H5NX

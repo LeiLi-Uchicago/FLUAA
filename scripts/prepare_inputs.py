@@ -72,16 +72,20 @@ def main() -> None:
         if args.max_records_test and processed > args.max_records_test:
             break
 
-    handles = {}
+    # Records are sorted by gene, so keep a single handle open and rotate it as
+    # the gene changes rather than holding one open handle per gene.
+    current_gene: str | None = None
+    handle = None
     try:
         for (_isolate_id, gene), row in sorted(best.items(), key=lambda item: (item[0][1], item[0][0])):
-            handle = handles.get(gene)
-            if handle is None:
+            if gene != current_gene:
+                if handle is not None:
+                    handle.close()
                 handle = (fasta_dir / f"{gene}.fasta").open("w")
-                handles[gene] = handle
+                current_gene = gene
             write_fasta_record(handle, str(row["header"]), str(row["sequence"]))
     finally:
-        for handle in handles.values():
+        if handle is not None:
             handle.close()
 
     write_dicts(report_dir / "fasta_duplicate_conflicts.csv", conflict_rows)
@@ -106,7 +110,14 @@ def input_fasta_paths(input_dir: Path) -> list[Path]:
         path
         for path in input_dir.glob("*.fasta")
         if not path.name.startswith(".")
+        and not is_amino_acid_fasta(path)
     )
+
+
+def is_amino_acid_fasta(path: Path) -> bool:
+    """Skip GISAID amino-acid exports (``*-AA.fasta``); the pipeline is nucleotide-only."""
+    stem = path.stem.lower()
+    return stem.endswith("-aa") or stem.endswith("_aa")
 
 
 def write_dicts(path: Path, rows: list[dict[str, object]]) -> None:

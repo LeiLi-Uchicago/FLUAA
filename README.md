@@ -6,7 +6,7 @@ Supported profiles:
 
 | Profile | Subtype |
 |---|---|
-| `H1N1` | Influenza A/H1N1, split into pdm09 and seasonal references by metadata lineage |
+| `H1N1` | Influenza A/H1N1, all records (seasonal and pdm09) mapped against the pdm09 references |
 | `H3N2` | Influenza A/H3N2 |
 | `B_VIC` | Influenza B Victoria |
 | `B_YAM` | Influenza B Yamagata |
@@ -174,7 +174,7 @@ nextflow run main.nf -profile H5NX \
 
 2. `BUILD_NEXTCLADE_MANIFEST`
 
-   Builds the list of gene FASTA files and Nextclade datasets to run. For H1N1, records are split into `pdm09` and `seasonal` groups using the metadata `Lineage` column and year. For H5NX, NA records are split by parsed `NA_subtype`; only configured N1/N2 groups are sent to Nextclade and the rest are handled by the H5 NA fallback counter.
+   Builds the list of gene FASTA files and Nextclade datasets to run. For H1N1, all records (seasonal and pdm09) are mapped against the pdm09 references for every gene. For H5NX, NA records are split by parsed `NA_subtype`; only configured N1/N2 groups are sent to Nextclade and the rest are handled by the H5 NA fallback counter.
 
 3. `RUN_NEXTCLADE`
 
@@ -279,8 +279,7 @@ The configured Nextclade references are summarized in `nextclade_references.md`.
 
 | Subtype | Lineage / Group | HA | NA | MP | NP | NS | PA | PB1 | PB2 |
 |---|---|---|---|---|---|---|---|---|---|
-| H1N1 | pdm09 | `flu_h1n1pdm_ha` | `flu_h1n1pdm_na` | `nextstrain/flu/h1n1pdm/mp` | `nextstrain/flu/h1n1pdm/np` | `nextstrain/flu/h1n1pdm/ns` | `nextstrain/flu/h1n1pdm/pa` | `nextstrain/flu/h1n1pdm/pb1` | `nextstrain/flu/h1n1pdm/pb2` |
-| H1N1 | seasonal | `flu_h1n1_ha` | `flu_h1n1_na` | `flu_h1n1_mp` | `flu_h1n1_np` | `flu_h1n1_ns` | `flu_h1n1_pa` | `flu_h1n1_pb1` | `flu_h1n1_pb2` |
+| H1N1 | all | `flu_h1n1pdm_ha` | `flu_h1n1pdm_na` | `nextstrain/flu/h1n1pdm/mp` | `nextstrain/flu/h1n1pdm/np` | `nextstrain/flu/h1n1pdm/ns` | `nextstrain/flu/h1n1pdm/pa` | `nextstrain/flu/h1n1pdm/pb1` | `nextstrain/flu/h1n1pdm/pb2` |
 | H3N2 | all | `nextstrain/flu/h3n2/ha/EPI1857216` | `nextstrain/flu/h3n2/na/EPI1857215` | `nextstrain/flu/h3n2/mp` | `nextstrain/flu/h3n2/np` | `nextstrain/flu/h3n2/ns` | `nextstrain/flu/h3n2/pa` | `nextstrain/flu/h3n2/pb1` | `nextstrain/flu/h3n2/pb2` |
 | B_VIC | all | `nextstrain/flu/vic/ha/KX058884` | `nextstrain/flu/vic/na/CY073894` | `nextstrain/flu/vic/mp` | `nextstrain/flu/vic/np` | `nextstrain/flu/vic/ns` | `nextstrain/flu/vic/pa` | `nextstrain/flu/vic/pb1` | `nextstrain/flu/vic/pb2` |
 | B_YAM | all | `nextstrain/flu/yam/ha/JN993010` | `nextstrain/flu/b/na/CY073894` | `nextstrain/flu/b/mp` | `nextstrain/flu/b/np` | `nextstrain/flu/b/ns` | `nextstrain/flu/b/pa` | `nextstrain/flu/b/pb1` | `nextstrain/flu/b/pb2` |
@@ -297,15 +296,14 @@ nextflow run main.nf -profile H5NX \
 
 The current H5 Nextclade datasets are HA-only, so FLUAA uses H2N2 influenza A datasets for internal-gene alignment/translation and subtype-aware NA outputs. NA count tables are named `NA_N1` through `NA_N9`. N1/N2 can use Nextclade translations when configured; other NA subtypes use fallback ORF translation with `CodonSource=fallback_orf`. NA records whose subtype cannot be parsed are skipped from NA protein counts.
 
-## H1N1 Lineage Split
+## H1N1 References
 
-The H1N1 profile uses `params.h1n1_split_lineage = true`.
+The H1N1 profile uses `params.h1n1_split_lineage = false`, so all H1N1 records —
+both seasonal and pdm09 — are mapped against the Nextclade pdm09 references for
+every gene. No lineage-based splitting is performed.
 
-The manifest builder assigns records as follows:
-
-| Metadata condition | Nextclade group |
-|---|---|
-| `Lineage` is `pdm09` or a pdm09 alias | `pdm09` |
-| `Lineage` is `seasonal` | `seasonal` |
-| `Lineage` is empty and `Year < 2010` | `seasonal` |
-| `Lineage` is empty and `Year >= 2010` or missing | `pdm09` |
+To restore lineage-based splitting (routing `seasonal`-classified isolates to
+seasonal references), set `params.h1n1_split_lineage = true` and provide
+`params.h1n1_seasonal_datasets`. The manifest builder then classifies records by
+the metadata `Lineage` column, falling back to `seasonal` for isolates with an
+empty lineage collected before 2010.
