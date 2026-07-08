@@ -8,7 +8,8 @@ import pandas as pd
 
 DATE_RE = re.compile(r"^(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2}))?)?$")
 NA_SUBTYPE_RE = re.compile(r"N([1-9])\b", re.IGNORECASE)
-STRAIN_YEAR_RE = re.compile(r"/(\d{4})$")
+STRAIN_YEAR_RE = re.compile(r"/((?:19|20)\d{2})$")
+YEAR_RE = re.compile(r"(19|20)\d{2}")
 
 
 def normalize_date(value: object) -> tuple[str, str]:
@@ -19,22 +20,44 @@ def normalize_date(value: object) -> tuple[str, str]:
     text = str(value).strip()
     if not text or text.upper() in {"NA", "NAN", "NONE", "NULL"}:
         return "", ""
+    # A year-only cell read from Excel arrives as a float string like "2020.0".
+    if text.endswith(".0") and text[:-2].isdigit():
+        text = text[:-2]
     match = DATE_RE.match(text)
     if match:
         year, month, _day = match.groups()
-        return year, f"{int(month):02d}" if month else ""
+        return year, month_or_unknown(month)
+    # Keep records whose collection date is only a year, even when it is wrapped
+    # in noise such as "2009-XX-XX", "2009 (Month and day unknown)", or "2009--".
+    # If nothing but a bare 4-digit year is present, treat the month as unknown
+    # rather than letting pandas fabricate January.
+    year_match = YEAR_RE.search(text)
+    if year_match and not re.search(r"\d", text[: year_match.start()] + text[year_match.end() :]):
+        return year_match.group(0), ""
     parsed = pd.to_datetime(text, errors="coerce")
-    if pd.isna(parsed):
-        return "", ""
-    return f"{parsed.year:04d}", f"{parsed.month:02d}"
+    if not pd.isna(parsed):
+        return f"{parsed.year:04d}", f"{parsed.month:02d}"
+    if year_match:
+        return year_match.group(0), ""
+    return "", ""
+
+
+def month_or_unknown(month: object) -> str:
+    if not month:
+        return ""
+    value = int(month)
+    return f"{value:02d}" if 1 <= value <= 12 else ""
 
 
 def normalize_date_for_strain(value: object, strain: object) -> tuple[str, str]:
     year, month = normalize_date(value)
+    # A complete sampling date (year and month) is authoritative; never override
+    # it with a year guessed from the strain name — the trailing number in a name
+    # like "A/Penarth/6684" is often an isolate number, not a year.
+    if year and month:
+        return year, month
     expected_year = strain_year(strain)
-    if expected_year and year and expected_year != year:
-        return expected_year, ""
-    if expected_year and not year:
+    if expected_year and expected_year != year:
         return expected_year, ""
     return year, month
 
