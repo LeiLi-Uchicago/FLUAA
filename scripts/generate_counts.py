@@ -20,6 +20,11 @@ from flu_pipeline.nextclade import gene_from_nextclade_dir_name, iter_ndjson, ob
 OBSERVED_AA = set("ACDEFGHIKLMNPQRSTVWY*")
 AMBIGUOUS_AA = set("XBZJ")
 MISSING_AA = set("?.")
+# Characters that do NOT represent real coverage. Nextclade renders the ragged
+# ends of an incomplete sequence as gaps AND as ambiguous 'X' (partial codons /
+# N nucleotides), so both must bound the observed span and be trimmed at the
+# ends. Only unambiguous residues count as coverage.
+NON_COVERAGE_AA = {"-", ".", " "} | AMBIGUOUS_AA | MISSING_AA
 VALID_CODON = set("ACGTU")
 VALID_NT = set("ACGTRYMKSWBDHVN")
 CODON_TABLE = {
@@ -114,7 +119,13 @@ def aggregate_translation(
         isolate_id = parse_isolate_from_seq_name(seq_name)
         meta = metadata_by_id.get(isolate_id, {})
         codons = codon_lookup.get(seq_name, [])
+        first, last = observed_span(aa_sequence)
         for index, aa in enumerate(aa_sequence, start=1):
+            if not (first <= index - 1 <= last):
+                # Leading/trailing gaps and ambiguous 'X' come from incomplete
+                # coverage, not real in-frame deletions or residues, so drop them
+                # entirely. Internal gaps/X between real residues are kept.
+                continue
             codon, codon_source = codons[index - 1] if index - 1 < len(codons) else ("NA", "unmapped")
             amino_acid, codon, codon_status = normalize_amino_acid_and_codon(
                 aa,
@@ -122,6 +133,24 @@ def aggregate_translation(
             )
             add_observation(counts, protein, str(index), amino_acid, codon, codon_status, codon_source, meta, clade_columns)
     return counts
+
+
+def observed_span(aa_sequence: str) -> tuple[int, int]:
+    """Return the first/last index of a real (unambiguous) residue in a peptide.
+
+    Gaps and ambiguous 'X' bound the span rather than counting as coverage, so
+    that the ragged ends of an incomplete sequence are trimmed. A sequence with
+    no real residue yields an empty span (0, -1), so every position falls
+    outside it.
+    """
+    def is_coverage(aa: str) -> bool:
+        return aa.upper() not in NON_COVERAGE_AA
+
+    first = next((index for index, aa in enumerate(aa_sequence) if is_coverage(aa)), None)
+    if first is None:
+        return 0, -1
+    last = next(index for index in range(len(aa_sequence) - 1, -1, -1) if is_coverage(aa_sequence[index]))
+    return first, last
 
 
 def h5_na_translation_record_groups(
