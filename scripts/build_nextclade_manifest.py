@@ -25,7 +25,7 @@ def main() -> None:
     seasonal_datasets = json.loads(args.h1n1_seasonal_datasets_json or "{}")
     h5_na_datasets = json.loads(args.h5_na_nextclade_datasets_json or "{}")
     metadata = pd.read_csv(args.metadata, dtype=str, keep_default_na=False)
-    group_by_id = lineage_group_by_isolate(metadata, args.id_column, args.subtype)
+    group_by_id = lineage_group_by_isolate(metadata, args.id_column, args.subtype, args.h1n1_lineage_csv)
     h5_na_by_id = h5_na_subtype_by_isolate(metadata, args.id_column)
 
     manifest_rows: list[dict[str, str]] = []
@@ -48,9 +48,16 @@ def main() -> None:
         writer.writerows(sorted(manifest_rows, key=lambda row: (row["group"], row["gene"])))
 
 
-def lineage_group_by_isolate(metadata: pd.DataFrame, id_column: str, subtype: str) -> dict[str, str]:
+def lineage_group_by_isolate(
+    metadata: pd.DataFrame, id_column: str, subtype: str, lineage_csv: str | None = None
+) -> dict[str, str]:
     if subtype != "H1N1":
         return {}
+    # Preferred: sequence-based lineage assignments from classify_h1n1_lineage.py.
+    csv_groups = load_lineage_csv(lineage_csv)
+    if csv_groups:
+        return csv_groups
+    # Fallback: classify from metadata Lineage/Year when no assignment CSV exists.
     if id_column not in metadata.columns:
         id_column = "Isolate_Id" if "Isolate_Id" in metadata.columns else metadata.columns[0]
     groups: dict[str, str] = {}
@@ -59,6 +66,24 @@ def lineage_group_by_isolate(metadata: pd.DataFrame, id_column: str, subtype: st
         if not isolate_id:
             continue
         groups[isolate_id] = classify_h1n1_lineage(row)
+    return groups
+
+
+def load_lineage_csv(lineage_csv: str | None) -> dict[str, str]:
+    if not lineage_csv:
+        return {}
+    path = Path(lineage_csv)
+    if not path.exists() or path.stat().st_size == 0:
+        return {}
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    if "Isolate_Id" not in frame.columns or "H1_lineage" not in frame.columns:
+        return {}
+    groups: dict[str, str] = {}
+    for row in frame.to_dict(orient="records"):
+        isolate_id = str(row.get("Isolate_Id", "")).strip()
+        lineage = str(row.get("H1_lineage", "")).strip()
+        if isolate_id and lineage in {"pdm09", "seasonal"}:
+            groups[isolate_id] = lineage
     return groups
 
 
@@ -173,6 +198,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--h1n1-seasonal-datasets-json", default="{}")
     parser.add_argument("--h5-na-nextclade-datasets-json", default="{}")
     parser.add_argument("--h1n1-split-lineage", action="store_true")
+    parser.add_argument("--h1n1-lineage-csv", default="", help="Sequence-based lineage assignments (Isolate_Id,H1_lineage)")
     return parser.parse_args()
 
 

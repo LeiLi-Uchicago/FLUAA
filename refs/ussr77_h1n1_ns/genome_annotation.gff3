@@ -1,0 +1,6 @@
+##gff-version 3
+##sequence-region A/USSR/90/1977 1 844
+A/USSR/90/1977	FLUAA	region	1	844	.	+	.	genome=genomic;mol_type=viral cRNA;segment=8;serotype=H1N1;strain=A/USSR/90/1977
+A/USSR/90/1977	FLUAA	CDS	1	30	.	+	0	Name=NEP;gbkey=CDS;gene=NEP;product=nonstructural protein 2
+A/USSR/90/1977	FLUAA	CDS	503	838	.	+	0	Name=NEP;gbkey=CDS;gene=NEP;product=nonstructural protein 2
+A/USSR/90/1977	FLUAA	CDS	1	693	.	+	0	Name=NS1;gbkey=CDS;gene=NS1;product=nonstructural protein 1

@@ -14,7 +14,13 @@ from Bio.Align import PairwiseAligner
 
 from flu_pipeline.fasta import iter_fasta, parse_isolate_from_seq_name
 from flu_pipeline.metadata import parse_na_subtype
-from flu_pipeline.nextclade import gene_from_nextclade_dir_name, iter_ndjson, object_seq_name
+from flu_pipeline.nextclade import (
+    gene_from_nextclade_dir_name,
+    iter_ndjson,
+    lineage_from_nextclade_dir_name,
+    object_seq_name,
+    output_protein_name,
+)
 
 
 OBSERVED_AA = set("ACDEFGHIKLMNPQRSTVWY*")
@@ -54,7 +60,7 @@ def main() -> None:
 
     metadata = pd.read_csv(args.metadata, dtype=str, keep_default_na=False)
     metadata_by_id = metadata.set_index("Isolate_Id", drop=False).to_dict(orient="index")
-    clade_columns = [col for col in args.clade_columns.split(",") if col and col in metadata.columns]
+    base_clade_columns = [col for col in args.clade_columns.split(",") if col and col in metadata.columns]
 
     events = collect_insertion_events(args.nextclade_dirs, metadata_by_id)
     insertion_support = summarize_insertions(events)
@@ -65,18 +71,21 @@ def main() -> None:
     translated_na_ids: set[str] = set()
     for directory in map(Path, args.nextclade_dirs):
         gene = gene_from_nextclade_dir_name(directory.name)
+        lineage = lineage_from_nextclade_dir_name(directory.name)
         aligned_nt_sequences = read_fasta_sequences(directory / "aligned.fasta")
-        for protein, records in iter_translation_record_groups(directory / "translations"):
+        for protein, records in iter_translation_record_groups(directory / "translations", lineage):
             if gene == "NA":
                 translated_na_ids.update(parse_isolate_from_seq_name(seq_name) for seq_name in records)
             record_groups = (
                 h5_na_translation_record_groups(records, metadata_by_id)
                 if args.h5_na_fallback and gene == "NA"
-                else [(protein, records)]
+                else [(output_protein_name(protein, lineage), records)]
             )
             for output_protein, output_records in record_groups:
                 if not output_records:
                     continue
+                # Seasonal H1N1 uses year-month only; pdm09 includes clades
+                clade_columns = [] if output_protein.endswith("_seasonal") else base_clade_columns
                 start = time.monotonic()
                 print(f"[generate_counts] counting {output_protein} from {directory.name}", file=sys.stderr, flush=True)
                 codon_lookup = build_codon_lookup(output_records, aligned_nt_sequences)
@@ -401,7 +410,7 @@ def read_fasta_sequences(path: Path) -> dict[str, str]:
     return dict(iter_simple_fasta(path))
 
 
-def iter_translation_record_groups(translations_dir: Path) -> Iterable[tuple[str, dict[str, str]]]:
+def iter_translation_record_groups(translations_dir: Path, lineage: str = "") -> Iterable[tuple[str, dict[str, str]]]:
     files = {path.stem: path for path in sorted(translations_dir.glob("*.fasta"))}
     for ignored in ["PA-X"]:
         files.pop(ignored, None)
@@ -413,12 +422,57 @@ def iter_translation_record_groups(translations_dir: Path) -> Iterable[tuple[str
             "HA2": read_fasta_sequences(files["HA2"]),
         }
         joined_records = joined_ha_records(component_records)
+        # Standardize gaps in seasonal H1N1 HA
+        if lineage == "seasonal":
+            joined_records = standardize_ha_gap_positions(joined_records)
         yield "HA", joined_records
         for key in ["SigPep", "HA1", "HA2"]:
             files.pop(key, None)
 
     for protein, path in sorted(files.items()):
-        yield protein, read_fasta_sequences(path)
+        records = read_fasta_sequences(path)
+        # Standardize gaps in seasonal H1N1 HA
+        if protein == "HA" and lineage == "seasonal":
+            records = standardize_ha_gap_positions(records)
+        yield protein, records
+
+
+def standardize_ha_gap_positions(
+    records: dict[str, str], gap_position: int = 147, window: int = 10
+) -> dict[str, str]:
+    """Standardize gap positions in HA translations to a canonical position.
+
+    For the stalk-region deletion (around position 147), local sequence similarity
+    can cause the aligner to place gaps at different positions. This function
+    standardizes all gap clusters to the canonical position.
+    """
+    standardized: dict[str, str] = {}
+    for name, sequence in records.items():
+        canonical_pos = gap_position - 1  # Convert to 0-indexed
+        start = max(0, canonical_pos - window)
+        end = min(len(sequence), canonical_pos + window + 1)
+
+        region = sequence[start:end]
+        if "-" not in region:
+            standardized[name] = sequence
+            continue
+
+        # Collect all gaps and remove them from the region
+        gap_count = region.count("-")
+        region_no_gaps = region.replace("-", "")
+
+        # Rebuild with all gaps at the canonical position
+        region_with_gaps = (
+            region_no_gaps[: canonical_pos - start]
+            + "-" * gap_count
+            + region_no_gaps[canonical_pos - start :]
+        )
+
+        seq_before = sequence[:start]
+        seq_after = sequence[end:]
+        standardized[name] = seq_before + region_with_gaps + seq_after
+
+    return standardized
 
 
 def joined_ha_records(component_records: dict[str, dict[str, str]]) -> dict[str, str]:
@@ -719,12 +773,14 @@ def collect_insertion_events(nextclade_dirs: list[str], metadata_by_id: dict[str
     events: list[dict[str, str]] = []
     for directory in map(Path, nextclade_dirs):
         fallback_gene = gene_from_nextclade_dir_name(directory.name)
+        lineage = lineage_from_nextclade_dir_name(directory.name)
         for obj in iter_ndjson(directory / "nextclade.ndjson"):
             seq_name = object_seq_name(obj)
             isolate_id = parse_isolate_from_seq_name(seq_name)
             meta = metadata_by_id.get(isolate_id, {})
             for item in insertion_items(obj):
-                protein = str(item.get("cdsName") or item.get("cds") or item.get("gene") or fallback_gene).upper()
+                base_protein = str(item.get("cdsName") or item.get("cds") or item.get("gene") or fallback_gene).upper()
+                protein = output_protein_name(base_protein, lineage)
                 position = str(item.get("pos") or item.get("position") or item.get("refPos") or item.get("left") or "")
                 aa = str(item.get("aa") or item.get("query") or item.get("ins") or item.get("inserted") or "INS")
                 codon = str(item.get("codon") or item.get("nuc") or item.get("nucSequence") or "NA").upper()

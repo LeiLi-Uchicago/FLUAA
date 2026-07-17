@@ -1,0 +1,3 @@
+##gff-version 3
+##sequence-region A/USSR/90/1977 1 1701
+A/USSR/90/1977	FLUAA	CDS	1	1701	.	+	0	gene_name=HA;product=HA

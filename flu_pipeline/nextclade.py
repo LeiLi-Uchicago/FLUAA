@@ -10,6 +10,11 @@ import pandas as pd
 
 GENE_NAMES = {"HA", "NA", "MP", "NP", "NS", "PA", "PB1", "PB2"}
 
+# H1N1 lineage groups. Nextclade result directories are named "<group>_<gene>"
+# (e.g. "pdm09_HA", "seasonal_HA"). These two groups use different references
+# with incompatible position numbering, so their counts must never be merged.
+H1N1_LINEAGE_GROUPS = {"pdm09", "seasonal"}
+
 HA_COLUMNS_BY_SUBTYPE = {
     "H1N1": ["HA_clade", "HA_proposedSubclade", "HA_subclade", "HA_short_clade", "HA_legacy_clade"],
     "H3N2": ["HA_clade", "HA_proposedSubclade", "HA_subclade", "HA_short_clade", "HA_legacy_clade"],
@@ -89,3 +94,21 @@ def gene_from_nextclade_dir_name(name: str) -> str:
         if text.endswith(f"_{gene}"):
             return gene
     return text
+
+
+def lineage_from_nextclade_dir_name(name: str) -> str:
+    """Return the H1N1 lineage group ("pdm09"/"seasonal") encoded in a Nextclade
+    result directory name like "pdm09_HA", or "" for any other group ("all_HA",
+    "N1_NA", ...). Used to keep seasonal and pdm09 counts in separate tables."""
+    gene = gene_from_nextclade_dir_name(name)
+    if gene != name.upper() and name.upper().endswith(f"_{gene}"):
+        group = name[: -(len(gene) + 1)]
+        if group in H1N1_LINEAGE_GROUPS:
+            return group
+    return ""
+
+
+def output_protein_name(protein: str, lineage: str) -> str:
+    """Protein label for count outputs: suffixed with the H1N1 lineage so
+    seasonal and pdm09 land in distinct tables (e.g. "HA_seasonal")."""
+    return f"{protein}_{lineage}" if lineage else protein

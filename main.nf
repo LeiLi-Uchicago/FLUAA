@@ -64,13 +64,26 @@ process RUN_NEXTCLADE {
   script:
   """
   mkdir -p '${group}_${gene}/translations'
-  ${params.nextclade_cmd} run \\
-    --dataset-name '${dataset}' \\
-    --output-tsv '${group}_${gene}/nextclade.tsv' \\
-    --output-ndjson '${group}_${gene}/nextclade.ndjson' \\
-    --output-fasta '${group}_${gene}/aligned.fasta' \\
-    --output-translations '${group}_${gene}/translations/{cds}.fasta' \\
-    '${fasta}'
+  if [ -d '${dataset}' ]; then
+    # Local custom dataset directory (e.g. the seasonal H1N1 references).
+    ${params.nextclade_cmd} run \\
+      --input-ref '${dataset}/reference.fasta' \\
+      --input-annotation '${dataset}/genome_annotation.gff3' \\
+      --output-tsv '${group}_${gene}/nextclade.tsv' \\
+      --output-ndjson '${group}_${gene}/nextclade.ndjson' \\
+      --output-fasta '${group}_${gene}/aligned.fasta' \\
+      --output-translations '${group}_${gene}/translations/{cds}.fasta' \\
+      '${fasta}'
+  else
+    # Named Nextclade community dataset (downloaded on demand).
+    ${params.nextclade_cmd} run \\
+      --dataset-name '${dataset}' \\
+      --output-tsv '${group}_${gene}/nextclade.tsv' \\
+      --output-ndjson '${group}_${gene}/nextclade.ndjson' \\
+      --output-fasta '${group}_${gene}/aligned.fasta' \\
+      --output-translations '${group}_${gene}/translations/{cds}.fasta' \\
+      '${fasta}'
+  fi
   """
 
   stub:
@@ -81,6 +94,33 @@ process RUN_NEXTCLADE {
   printf '{"seqName":"stub|EPI_STUB|${gene}"}\\n' > '${group}_${gene}/nextclade.ndjson'
   printf '>stub|EPI_STUB|${gene}\\nATGAAA\\n' > '${group}_${gene}/aligned.fasta'
   printf '>stub|EPI_STUB|${gene}\\nMK\\n' > '${group}_${gene}/translations/${gene}.fasta'
+  """
+}
+
+process STANDARDIZE_SEASONAL_HA_GAPS {
+  tag "seasonal_HA"
+  conda params.python_env
+
+  input:
+  path seasonal_ha_translations
+
+  output:
+  path "standardized_HA.fasta", emit: ha_fasta
+
+  script:
+  """
+  export PYTHONPATH='${projectDir}':\${PYTHONPATH:-}
+  ${params.python_cmd} ${projectDir}/scripts/standardize_gap_position.py \\
+    --input '${seasonal_ha_translations}' \\
+    --output standardized_HA.fasta \\
+    --protein HA \\
+    --gap-position 147 \\
+    --window 10
+  """
+
+  stub:
+  """
+  cp '${seasonal_ha_translations}' standardized_HA.fasta
   """
 }
 
@@ -118,6 +158,89 @@ process PUBLISH_NEXTCLADE_RESULTS {
   """
 }
 
+process SPLIT_BY_LINEAGE {
+  tag "${params.subtype}"
+  conda params.python_env
+
+  input:
+  path metadata
+  path gene_fastas
+  path lineage_csv
+
+  output:
+  tuple path("pdm09_metadata.csv"), path("pdm09_fastas"), emit: pdm09
+  tuple path("seasonal_metadata.csv"), path("seasonal_fastas"), emit: seasonal
+
+  script:
+  def fastas = gene_fastas.collect { "'${it}'" }.join(' ')
+  """
+  export PYTHONPATH='${projectDir}':\${PYTHONPATH:-}
+  ${params.python_cmd} ${projectDir}/scripts/split_by_lineage.py \\
+    --metadata '${metadata}' \\
+    --lineage-csv '${lineage_csv}' \\
+    --gene-fastas ${fastas} \\
+    --outdir .
+  """
+
+  stub:
+  """
+  mkdir -p pdm09_fastas seasonal_fastas
+  cp ${metadata} pdm09_metadata.csv
+  cp ${metadata} seasonal_metadata.csv
+  touch pdm09_fastas/HA.fasta seasonal_fastas/HA.fasta
+  """
+}
+
+process CLASSIFY_H1N1_LINEAGE {
+  tag "${params.subtype}"
+  publishDir "${params.outdir}", mode: 'copy'
+  conda params.nextclade_env
+
+  input:
+  path gene_fastas
+  val pdm_ha_dataset
+  val seasonal_ha_dataset
+
+  output:
+  path "h1n1_lineage.csv", emit: lineage
+
+  script:
+  """
+  export PYTHONPATH='${projectDir}':\${PYTHONPATH:-}
+  mkdir -p classify
+
+  run_ha() {
+    ds="\$1"
+    out="\$2"
+    if [ -d "\$ds" ]; then
+      ${params.nextclade_cmd} run \\
+        --input-ref "\$ds/reference.fasta" \\
+        --input-annotation "\$ds/genome_annotation.gff3" \\
+        --output-tsv "\$out" \\
+        HA.fasta
+    else
+      ${params.nextclade_cmd} run \\
+        --dataset-name "\$ds" \\
+        --output-tsv "\$out" \\
+        HA.fasta
+    fi
+  }
+
+  run_ha '${pdm_ha_dataset}' classify/pdm_ha.tsv
+  run_ha '${seasonal_ha_dataset}' classify/seasonal_ha.tsv
+
+  ${params.python_cmd} ${projectDir}/scripts/classify_h1n1_lineage.py \\
+    --pdm-tsv classify/pdm_ha.tsv \\
+    --seasonal-tsv classify/seasonal_ha.tsv \\
+    --out h1n1_lineage.csv
+  """
+
+  stub:
+  """
+  printf 'Isolate_Id,H1_lineage,pdm_divergence,seasonal_divergence\\nEPI_STUB,pdm09,0,50\\n' > h1n1_lineage.csv
+  """
+}
+
 process BUILD_NEXTCLADE_MANIFEST {
   tag "${params.subtype}"
   conda params.python_env
@@ -125,6 +248,7 @@ process BUILD_NEXTCLADE_MANIFEST {
   input:
   path metadata
   path gene_fastas
+  path lineage_csv
 
   output:
   path "nextclade_manifest.csv", emit: manifest
@@ -147,6 +271,7 @@ process BUILD_NEXTCLADE_MANIFEST {
     --datasets-json '${datasetsJson}' \\
     --h1n1-seasonal-datasets-json '${seasonalJson}' \\
     --h5-na-nextclade-datasets-json '${h5NaJson}' \\
+    --h1n1-lineage-csv '${lineage_csv}' \\
     ${splitFlag}
   """
 
@@ -232,6 +357,39 @@ process GENERATE_COUNTS {
   """
 }
 
+process ORGANIZE_BY_LINEAGE {
+  tag "${params.subtype}"
+  publishDir "${params.outdir}", mode: 'copy'
+  conda params.python_env
+
+  input:
+  path metadata
+  path lineage_csv
+  path count_dir
+
+  output:
+  path "pdm09", emit: pdm09_dir
+  path "seasonalH1N1", emit: seasonal_dir
+
+  script:
+  """
+  export PYTHONPATH='${projectDir}':\${PYTHONPATH:-}
+  ${params.python_cmd} ${projectDir}/scripts/organize_by_lineage.py \\
+    --metadata '${metadata}' \\
+    --lineage-csv '${lineage_csv}' \\
+    --count-dir '${count_dir}' \\
+    --outdir .
+  """
+
+  stub:
+  """
+  mkdir -p pdm09 seasonalH1N1
+  touch pdm09/metadata_merged_annotated.csv
+  touch seasonalH1N1/metadata_merged_annotated.csv
+  mkdir -p pdm09/count/HA seasonalH1N1/count/HA
+  """
+}
+
 process VALIDATE_CODONS {
   tag "${params.subtype}"
   publishDir "${params.outdir}", mode: 'copy'
@@ -265,7 +423,20 @@ workflow {
   prepared = PREPARE_INPUTS(params.subtype, params.input_dir)
 
   prepared_gene_fastas = prepared.gene_fastas.collect()
-  manifest = BUILD_NEXTCLADE_MANIFEST(prepared.metadata, prepared_gene_fastas)
+
+  // For H1N1 with lineage splitting, classify each isolate as seasonal or pdm09
+  // from its HA sequence and feed those assignments to the manifest builder.
+  if (params.subtype == 'H1N1' && params.h1n1_split_lineage) {
+    lineage_csv = CLASSIFY_H1N1_LINEAGE(
+      prepared_gene_fastas,
+      params.datasets.HA,
+      params.h1n1_seasonal_datasets.HA
+    ).lineage
+  } else {
+    lineage_csv = file("${projectDir}/assets/no_lineage.csv")
+  }
+
+  manifest = BUILD_NEXTCLADE_MANIFEST(prepared.metadata, prepared_gene_fastas, lineage_csv)
 
   nextclade_inputs = manifest.manifest
     .splitCsv(header: true)
@@ -276,5 +447,11 @@ workflow {
 
   annotated = ANNOTATE_METADATA(prepared.metadata, nextclade_dirs)
   counts = GENERATE_COUNTS(annotated.annotated_metadata, nextclade_dirs, prepared_gene_fastas)
+
+  // For H1N1 with split lineage: reorganize outputs into pdm09/ and seasonalH1N1/ folders
+  if (params.subtype == 'H1N1' && params.h1n1_split_lineage) {
+    ORGANIZE_BY_LINEAGE(annotated.annotated_metadata, lineage_csv, counts.count_outputs)
+  }
+
   VALIDATE_CODONS(counts.count_outputs)
 }

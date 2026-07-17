@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "3.0.0",
+  "name": "Seasonal H1N1",
+  "reference": {
+    "accession": "EPI_ISL_66104",
+    "country": "USSR",
+    "date": "1977-01-01",
+    "name": "A/USSR/90/1977"
+  },
+  "attributes": {},
+  "files": {
+    "reference": "reference.fasta",
+    "genomeAnnotation": "genome_annotation.gff3",
+    "pathogenJson": "pathogen.json"
+  }
+}
