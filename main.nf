@@ -197,12 +197,14 @@ process CLASSIFY_H1N1_LINEAGE {
   conda params.nextclade_env
 
   input:
+  path metadata
   path gene_fastas
   val pdm_ha_dataset
   val seasonal_ha_dataset
 
   output:
   path "h1n1_lineage.csv", emit: lineage
+  path "lineage_filter_out.csv", emit: filter_out
 
   script:
   """
@@ -232,12 +234,17 @@ process CLASSIFY_H1N1_LINEAGE {
   ${params.python_cmd} ${projectDir}/scripts/classify_h1n1_lineage.py \\
     --pdm-tsv classify/pdm_ha.tsv \\
     --seasonal-tsv classify/seasonal_ha.tsv \\
-    --out h1n1_lineage.csv
+    --metadata '${metadata}' \\
+    --out h1n1_lineage.csv \\
+    --filter-out lineage_filter_out.csv \\
+    --max-divergence-frac ${params.h1n1_max_divergence_frac} \\
+    --pdm-min-year ${params.h1n1_pdm_min_year}
   """
 
   stub:
   """
-  printf 'Isolate_Id,H1_lineage,pdm_divergence,seasonal_divergence\\nEPI_STUB,pdm09,0,50\\n' > h1n1_lineage.csv
+  printf 'Isolate_Id,H1_lineage,confidence,pdm_divergence,seasonal_divergence,pdm_divergence_frac,seasonal_divergence_frac,gap_size,filter_reason\\nEPI_STUB,pdm09,HIGH,0,50,0.0000,0.0294,50,\\n' > h1n1_lineage.csv
+  printf 'Isolate_Id,H1_lineage,pdm_divergence,seasonal_divergence,pdm_divergence_frac,seasonal_divergence_frac,filter_reason\\n' > lineage_filter_out.csv
   """
 }
 
@@ -368,8 +375,8 @@ process ORGANIZE_BY_LINEAGE {
   path count_dir
 
   output:
-  path "pdm09", emit: pdm09_dir
-  path "seasonalH1N1", emit: seasonal_dir
+  path "H1N1pdm09", emit: pdm09_dir
+  path "H1N1seasonal", emit: seasonal_dir
 
   script:
   """
@@ -383,10 +390,10 @@ process ORGANIZE_BY_LINEAGE {
 
   stub:
   """
-  mkdir -p pdm09 seasonalH1N1
-  touch pdm09/metadata_merged_annotated.csv
-  touch seasonalH1N1/metadata_merged_annotated.csv
-  mkdir -p pdm09/count/HA seasonalH1N1/count/HA
+  mkdir -p H1N1pdm09 H1N1seasonal
+  touch H1N1pdm09/metadata_merged_annotated.csv
+  touch H1N1seasonal/metadata_merged_annotated.csv
+  mkdir -p H1N1pdm09/count/HA H1N1seasonal/count/HA
   """
 }
 
@@ -428,6 +435,7 @@ workflow {
   // from its HA sequence and feed those assignments to the manifest builder.
   if (params.subtype == 'H1N1' && params.h1n1_split_lineage) {
     lineage_csv = CLASSIFY_H1N1_LINEAGE(
+      prepared.metadata,
       prepared_gene_fastas,
       params.datasets.HA,
       params.h1n1_seasonal_datasets.HA

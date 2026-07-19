@@ -24,12 +24,15 @@ def main() -> None:
     meta_df = pd.read_csv(metadata, dtype=str, keep_default_na=False)
     id_column = "Isolate_Id" if "Isolate_Id" in meta_df.columns else meta_df.columns[0]
 
-    pdm_meta = meta_df[meta_df[id_column].apply(lambda x: lineage_by_id.get(str(x).strip(), "pdm09") == "pdm09")]
-    seasonal_meta = meta_df[meta_df[id_column].apply(lambda x: lineage_by_id.get(str(x).strip(), "pdm09") == "seasonal")]
+    # Isolates classified "filtered_out" (pre-pandemic pdm09) are excluded from
+    # both lineage outputs; only pdm09 and seasonal are emitted.
+    lineage_of = lambda x: lineage_by_id.get(str(x).strip(), "pdm09")
+    pdm_meta = meta_df[meta_df[id_column].apply(lambda x: lineage_of(x) == "pdm09")]
+    seasonal_meta = meta_df[meta_df[id_column].apply(lambda x: lineage_of(x) == "seasonal")]
 
     # Create output directories
-    pdm_dir = outdir / "pdm09"
-    seasonal_dir = outdir / "seasonalH1N1"
+    pdm_dir = outdir / "H1N1pdm09"
+    seasonal_dir = outdir / "H1N1seasonal"
     pdm_dir.mkdir(parents=True, exist_ok=True)
     seasonal_dir.mkdir(parents=True, exist_ok=True)
 
@@ -41,7 +44,7 @@ def main() -> None:
     copy_lineage_counts(count_dir, pdm_dir / "count", "pdm09")
     copy_lineage_counts(count_dir, seasonal_dir / "count", "seasonal")
 
-    print(f"[organize_by_lineage] Created pdm09/ and seasonalH1N1/ with split metadata and counts")
+    print(f"[organize_by_lineage] Created H1N1pdm09/ and H1N1seasonal/ with split metadata and counts")
 
 
 def copy_lineage_counts(src_count_dir: Path, dst_count_dir: Path, lineage: str) -> None:

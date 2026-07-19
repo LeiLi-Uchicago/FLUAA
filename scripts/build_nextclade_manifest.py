@@ -82,7 +82,9 @@ def load_lineage_csv(lineage_csv: str | None) -> dict[str, str]:
     for row in frame.to_dict(orient="records"):
         isolate_id = str(row.get("Isolate_Id", "")).strip()
         lineage = str(row.get("H1_lineage", "")).strip()
-        if isolate_id and lineage in {"pdm09", "seasonal"}:
+        # "filtered_out" is carried through so split_h1n1_gene can drop those
+        # isolates entirely instead of defaulting them back into pdm09.
+        if isolate_id and lineage in {"pdm09", "seasonal", "filtered_out"}:
             groups[isolate_id] = lineage
     return groups
 
@@ -129,7 +131,11 @@ def split_h1n1_gene(
     grouped: dict[str, list[tuple[str, str]]] = {"pdm09": [], "seasonal": []}
     for record in iter_fasta(fasta):
         group = group_by_id.get(record.isolate_id, "pdm09")
-        grouped.setdefault(group, []).append((record.header, record.sequence))
+        # Filtered-out (pre-pandemic pdm09) and any non-lineage groups are dropped
+        # so they are never aligned or counted.
+        if group not in {"pdm09", "seasonal"}:
+            continue
+        grouped[group].append((record.header, record.sequence))
 
     rows: list[dict[str, str]] = []
     for group, records in grouped.items():
